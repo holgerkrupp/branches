@@ -17,7 +17,11 @@ final class GitMenuStore {
     private let service: GitServiceProtocol
     private var securityScopedPaths: Set<String> = []
     private var refreshSignatures: [Repository.ID: String] = [:]
+    private var repositoryChangeMonitor: RepositoryChangeMonitor?
+    private var repositoryChangeDebounceTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
+    private var repositoryViewVisibilityCount = 0
+    private var isCheckingForRepositoryChanges = false
 
     init(service: GitServiceProtocol, persistedRepositoriesData: Data = Data()) {
         self.service = service
@@ -26,8 +30,6 @@ final class GitMenuStore {
         self.selectedRepositoryID = nil
 
         restoreInitialRepositories(from: persistedRepositoriesData)
-
-        startAutoRefresh()
     }
 
     var selectedRepository: Repository? {
@@ -45,6 +47,10 @@ final class GitMenuStore {
     func selectRepository(_ repository: Repository) {
         selectedRepositoryID = repository.id
         selectedBranchName = Self.allBranchesName
+
+        guard isRepositoryViewVisible else { return }
+        updateRepositoryChangeMonitor()
+        scheduleSelectedRepositoryRefresh(delay: .zero)
     }
 
     func selectBranch(_ branchName: String) {
@@ -204,6 +210,22 @@ final class GitMenuStore {
         }
     }
 
+    func pullSelectedRepository() {
+        guard let repository = selectedRepository else { return }
+        let branch = repository.currentBranchName ?? "current branch"
+        performRepositoryMutation(progressText: "Pulling \(branch)...", repository: repository) { service, repository in
+            try service.pull(repository)
+        }
+    }
+
+    func pushSelectedRepository() {
+        guard let repository = selectedRepository else { return }
+        let branch = repository.currentBranchName ?? "current branch"
+        performRepositoryMutation(progressText: "Pushing \(branch)...", repository: repository) { service, repository in
+            try service.push(repository)
+        }
+    }
+
     func checkout(branch: String) {
         guard let repository = selectedRepository else { return }
         performRepositoryMutation(progressText: "Checking out \(branch)...", repository: repository) { service, repository in
@@ -239,6 +261,27 @@ final class GitMenuStore {
 
     func clearImportError() {
         importErrorMessage = nil
+    }
+
+    func repositoryViewDidAppear() {
+        repositoryViewVisibilityCount += 1
+        guard repositoryViewVisibilityCount == 1 else { return }
+
+        updateRepositoryChangeMonitor()
+        startAutoRefresh()
+        scheduleSelectedRepositoryRefresh(delay: .zero)
+    }
+
+    func repositoryViewDidDisappear() {
+        repositoryViewVisibilityCount = max(0, repositoryViewVisibilityCount - 1)
+        guard !isRepositoryViewVisible else { return }
+
+        repositoryChangeMonitor?.stopMonitoring()
+        repositoryChangeMonitor = nil
+        repositoryChangeDebounceTask?.cancel()
+        repositoryChangeDebounceTask = nil
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
     }
 
     @discardableResult
@@ -374,6 +417,11 @@ final class GitMenuStore {
 
         selectedRepositoryID = repository.id
         selectedBranchName = Self.allBranchesName
+
+        if isRepositoryViewVisible {
+            updateRepositoryChangeMonitor()
+            scheduleSelectedRepositoryRefresh(delay: .zero)
+        }
     }
 
     private func validateSelectedBranch() {
@@ -401,66 +449,101 @@ final class GitMenuStore {
         }
     }
 
+    private var isRepositoryViewVisible: Bool {
+        repositoryViewVisibilityCount > 0
+    }
+
+    private func updateRepositoryChangeMonitor() {
+        repositoryChangeMonitor?.stopMonitoring()
+        repositoryChangeMonitor = nil
+
+        guard isRepositoryViewVisible,
+              let repository = selectedRepository,
+              !repository.source.isRemote else {
+            return
+        }
+
+        let monitor = RepositoryChangeMonitor { [weak self] in
+            self?.scheduleSelectedRepositoryRefresh()
+        }
+        repositoryChangeMonitor = monitor
+        monitor.startMonitoring(repository.url)
+    }
+
     private func startAutoRefresh() {
         autoRefreshTask?.cancel()
         autoRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
                 guard let self else { return }
-                await self.autoRefreshLocalRepositoriesIfNeeded()
+                await self.refreshSelectedRepositoryIfNeeded()
+
+                do {
+                    try await Task.sleep(for: .seconds(3))
+                } catch {
+                    return
+                }
             }
         }
     }
 
-    private func autoRefreshLocalRepositoriesIfNeeded() async {
-        guard !isImportingRepository else {
-            return
-        }
-
-        let localRepositories = repositories.filter { !$0.source.isRemote }
-        guard !localRepositories.isEmpty else {
-            return
-        }
-
-        let service = self.service
-        let selectedRepositoryID = self.selectedRepositoryID
-        let activeBranchSelection = self.activeBranchSelection
-        let existingSignatures = self.refreshSignatures
-
-        do {
-            let changedRepositoryIDs = try await Task.detached(priority: .utility) {
-                try localRepositories.compactMap { repository -> Repository.ID? in
-                    let newSignature = try service.refreshSignature(for: repository)
-                    return newSignature == existingSignatures[repository.id] ? nil : repository.id
-                }
-            }.value
-
-            guard !changedRepositoryIDs.isEmpty else {
+    private func scheduleSelectedRepositoryRefresh(delay: Duration = .milliseconds(250)) {
+        repositoryChangeDebounceTask?.cancel()
+        repositoryChangeDebounceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
                 return
             }
 
-            let changedRepositoryIDSet = Set(changedRepositoryIDs)
-            let refreshedRepositories = try await Task.detached(priority: .userInitiated) {
-                try localRepositories
-                    .filter { changedRepositoryIDSet.contains($0.id) }
-                    .map { repository in
-                        let selectedBranch = repository.id == selectedRepositoryID ? activeBranchSelection : nil
-                        return try service.refreshRepository(repository, selectedBranch: selectedBranch)
-                            .preservingIdentity(from: repository)
-                    }
+            guard let self else { return }
+            await self.refreshSelectedRepositoryIfNeeded()
+        }
+    }
+
+    private func refreshSelectedRepositoryIfNeeded() async {
+        guard isRepositoryViewVisible,
+              !isImportingRepository,
+              !isCheckingForRepositoryChanges,
+              let selectedRepositoryID,
+              let repository = repositories.first(where: { $0.id == selectedRepositoryID }),
+              !repository.source.isRemote else {
+            return
+        }
+
+        isCheckingForRepositoryChanges = true
+        defer { isCheckingForRepositoryChanges = false }
+
+        let service = self.service
+        let activeBranchSelection = self.activeBranchSelection
+        let existingSignature = refreshSignatures[repository.id]
+
+        do {
+            let newSignature = try await Task.detached(priority: .utility) {
+                try service.refreshSignature(for: repository)
             }.value
 
-            var repositoriesByID = Dictionary(uniqueKeysWithValues: repositories.map { ($0.id, $0) })
-            for repository in refreshedRepositories {
-                repositoriesByID[repository.id] = repository
+            guard newSignature != existingSignature else {
+                return
             }
 
-            repositories = repositories.compactMap { repositoriesByID[$0.id] }
+            let refreshedRepository = try await Task.detached(priority: .userInitiated) {
+                try service.refreshRepository(repository, selectedBranch: activeBranchSelection)
+                    .preservingIdentity(from: repository)
+            }.value
+
+            guard let repositoryIndex = repositories.firstIndex(where: { $0.id == selectedRepositoryID }) else {
+                return
+            }
+
+            repositories[repositoryIndex] = refreshedRepository
+            if let newSignature {
+                refreshSignatures[selectedRepositoryID] = newSignature
+            } else {
+                refreshSignatures.removeValue(forKey: selectedRepositoryID)
+            }
             validateSelectedBranch()
-            captureRefreshSignatures()
-            persistRepositories()
         } catch {
-            // Background polling should never trap the UI with repeated modal errors.
+            // Automatic refresh is best-effort and should not interrupt the user.
         }
     }
 
@@ -502,6 +585,11 @@ final class GitMenuStore {
             self.selectedRepositoryID = self.repositories.first?.id
             self.captureRefreshSignatures()
             self.isImportingRepository = false
+
+            if self.isRepositoryViewVisible {
+                self.updateRepositoryChangeMonitor()
+                self.scheduleSelectedRepositoryRefresh(delay: .zero)
+            }
         }
     }
 

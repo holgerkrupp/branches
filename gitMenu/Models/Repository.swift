@@ -41,6 +41,7 @@ struct Repository: Identifiable, Hashable {
     let currentBranchName: String?
     let defaultBranchName: String?
     let originWebURL: URL?
+    let hasRemote: Bool
     let updatedText: String
 
     nonisolated init(
@@ -56,6 +57,7 @@ struct Repository: Identifiable, Hashable {
         currentBranchName: String? = nil,
         defaultBranchName: String? = nil,
         originWebURL: URL? = nil,
+        hasRemote: Bool = false,
         updatedText: String = "Updated just now"
     ) {
         self.id = id
@@ -70,6 +72,7 @@ struct Repository: Identifiable, Hashable {
         self.currentBranchName = currentBranchName
         self.defaultBranchName = defaultBranchName
         self.originWebURL = originWebURL
+        self.hasRemote = hasRemote
         self.updatedText = updatedText
     }
 
@@ -87,6 +90,7 @@ struct Repository: Identifiable, Hashable {
             currentBranchName: currentBranchName,
             defaultBranchName: defaultBranchName,
             originWebURL: originWebURL,
+            hasRemote: hasRemote,
             updatedText: updatedText
         )
     }

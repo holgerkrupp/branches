@@ -75,7 +75,13 @@ struct GitPopoverView: View {
                 openRepository()
             }
         )
-        .alert("Couldn’t Add Repository", isPresented: Binding(
+        .onAppear {
+            store.repositoryViewDidAppear()
+        }
+        .onDisappear {
+            store.repositoryViewDidDisappear()
+        }
+        .alert("Couldn’t Complete Git Operation", isPresented: Binding(
             get: { store.importErrorMessage != nil },
             set: { if !$0 { store.clearImportError() } }
         )) {
@@ -115,6 +121,14 @@ struct GitPopoverView: View {
                     .help("Fetch remote history")
                     .disabled(store.isImportingRepository)
             } else {
+                toolbarButton(systemName: "arrow.down.circle", action: store.pullSelectedRepository)
+                    .help(remoteActionHelp("Pull", for: repository))
+                    .disabled(store.isImportingRepository || !repository.hasRemote || repository.currentBranchName == nil)
+
+                toolbarButton(systemName: "arrow.up.circle", action: store.pushSelectedRepository)
+                    .help(remoteActionHelp("Push", for: repository))
+                    .disabled(store.isImportingRepository || !repository.hasRemote || repository.currentBranchName == nil)
+
                 Image(systemName: "bolt.badge.clock")
                     .font(.system(size: 11.5, weight: .semibold))
                     .frame(width: 22, height: 22)
@@ -186,6 +200,18 @@ struct GitPopoverView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white.opacity(0.84))
+    }
+
+    private func remoteActionHelp(_ action: String, for repository: Repository) -> String {
+        guard repository.hasRemote else {
+            return "No remote configured"
+        }
+
+        guard let branch = repository.currentBranchName else {
+            return "Check out a branch before \(action.lowercased())ing"
+        }
+
+        return "\(action) \(branch)"
     }
 
     private func openExpandedWindow() {

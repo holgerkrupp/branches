@@ -30,6 +30,7 @@ struct CommitRowView: View {
                     .frame(height: 19, alignment: .leading)
             }
 
+            Spacer()
 
             if let actionMenu {
                 Menu {

@@ -9,6 +9,8 @@ nonisolated protocol GitServiceProtocol: Sendable {
     func refreshRepository(_ repository: Repository, selectedBranch: String?) throws -> Repository
     func refreshSignature(for repository: Repository) throws -> String?
     func commitAll(in repository: Repository, message: String) throws -> Repository
+    func pull(_ repository: Repository) throws -> Repository
+    func push(_ repository: Repository) throws -> Repository
     func checkout(branch: String, in repository: Repository) throws -> Repository
     func merge(branch: String, into repository: Repository) throws -> Repository
     func cherryPick(commitID: String, in repository: Repository) throws -> Repository
@@ -41,6 +43,18 @@ nonisolated struct GitService: GitServiceProtocol, Sendable {
 
 extension GitService {
     func openRepository(at url: URL, selectedBranch: String? = nil) throws -> Repository {
+        try openLocalRepository(
+            at: url,
+            selectedBranch: selectedBranch,
+            updatedText: "Updated just now"
+        )
+    }
+
+    func openLocalRepository(
+        at url: URL,
+        selectedBranch: String?,
+        updatedText: String
+    ) throws -> Repository {
         let rootPath = try runGit(["rev-parse", "--show-toplevel"], in: url).trimmingCharacters(in: .whitespacesAndNewlines)
         let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
         return try repository(
@@ -48,7 +62,7 @@ extension GitService {
             selectedBranch: selectedBranch,
             source: .local,
             displayPath: abbreviatedPath(for: rootURL),
-            updatedText: "Updated just now",
+            updatedText: updatedText,
             branchReferenceNamespace: "refs/heads",
             defaultBranchName: nil
         )
@@ -108,7 +122,7 @@ extension GitService {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let head = try runGit(["rev-parse", "HEAD"], in: repository.url)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let status = try runGit(["status", "--porcelain"], in: repository.url)
+        let status = try runGit(["--no-optional-locks", "status", "--porcelain"], in: repository.url)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         return [branch, head, status].joined(separator: "\u{1F}")
@@ -126,7 +140,7 @@ extension GitService {
         _ = try runGit(
             ["clone", "--", normalizedURL, destinationURL.path],
             in: parentURL,
-            environment: fetchEnvironment
+            environment: remoteCommandEnvironment
         )
 
         return try openRepository(at: destinationURL, selectedBranch: nil)
@@ -140,6 +154,53 @@ extension GitService {
         _ = try runGit(["add", "--all"], in: repository.url)
         _ = try runGit(["commit", "-m", message], in: repository.url)
         return try openRepository(at: repository.url, selectedBranch: nil)
+    }
+
+    func pull(_ repository: Repository) throws -> Repository {
+        try validateLocalRepositoryForRemoteOperation(repository)
+
+        let branch = try currentBranch(in: repository)
+        guard hasUpstream(in: repository) else {
+            throw GitServiceError.missingUpstream(branch)
+        }
+
+        _ = try runGit(
+            ["pull", "--ff-only"],
+            in: repository.url,
+            environment: remoteCommandEnvironment
+        )
+
+        return try openLocalRepository(
+            at: repository.url,
+            selectedBranch: nil,
+            updatedText: "Pulled just now"
+        )
+    }
+
+    func push(_ repository: Repository) throws -> Repository {
+        try validateLocalRepositoryForRemoteOperation(repository)
+
+        let branch = try currentBranch(in: repository)
+        let arguments: [String]
+
+        if hasUpstream(in: repository) {
+            arguments = ["push"]
+        } else {
+            let remote = try preferredPushRemote(in: repository, branch: branch)
+            arguments = ["push", "--set-upstream", remote, branch]
+        }
+
+        _ = try runGit(
+            arguments,
+            in: repository.url,
+            environment: remoteCommandEnvironment
+        )
+
+        return try openLocalRepository(
+            at: repository.url,
+            selectedBranch: nil,
+            updatedText: "Pushed just now"
+        )
     }
 
     func checkout(branch: String, in repository: Repository) throws -> Repository {
@@ -213,11 +274,68 @@ extension GitService {
 }
 
 private extension GitService {
-    var fetchEnvironment: [String: String] {
+    var remoteCommandEnvironment: [String: String] {
         [
             "GIT_TERMINAL_PROMPT": "0",
-            "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"
+            "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+            "GIT_EDITOR": "true",
+            "GIT_MERGE_AUTOEDIT": "no"
         ]
+    }
+
+    func validateLocalRepositoryForRemoteOperation(_ repository: Repository) throws {
+        guard !repository.source.isRemote else {
+            throw GitServiceError.readOnlyRepository
+        }
+
+        guard !remoteNames(at: repository.url).isEmpty else {
+            throw GitServiceError.noRemote
+        }
+    }
+
+    func currentBranch(in repository: Repository) throws -> String {
+        let branch = try runGit(["branch", "--show-current"], in: repository.url)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !branch.isEmpty else {
+            throw GitServiceError.detachedHead
+        }
+
+        return branch
+    }
+
+    func hasUpstream(in repository: Repository) -> Bool {
+        (try? runGit(
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            in: repository.url
+        )) != nil
+    }
+
+    func preferredPushRemote(in repository: Repository, branch: String) throws -> String {
+        let remotes = remoteNames(at: repository.url)
+        let configuredRemoteKeys = [
+            "branch.\(branch).pushRemote",
+            "remote.pushDefault",
+            "branch.\(branch).remote"
+        ]
+
+        for key in configuredRemoteKeys {
+            if let remote = try? runGit(["config", "--get", key], in: repository.url)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               remotes.contains(remote) {
+                return remote
+            }
+        }
+
+        if remotes.contains("origin") {
+            return "origin"
+        }
+
+        if remotes.count == 1, let remote = remotes.first {
+            return remote
+        }
+
+        throw GitServiceError.ambiguousRemote
     }
 
     func normalizedRemoteURL(_ remoteURL: String) throws -> String {
@@ -279,6 +397,7 @@ private extension GitService {
         let currentBranch = inferredCurrentBranch(in: url, source: source)
         let resolvedDefaultBranchName = defaultBranchName ?? currentBranch
         let originWebURL = remoteWebURL(in: url, source: source)
+        let hasRemote = source.isRemote || !remoteNames(at: url).isEmpty
         let branches = branchNames.enumerated().map { index, branchName in
             GitBranch(
                 name: branchName,
@@ -307,8 +426,20 @@ private extension GitService {
             currentBranchName: currentBranch,
             defaultBranchName: resolvedDefaultBranchName,
             originWebURL: originWebURL,
+            hasRemote: hasRemote,
             updatedText: updatedText
         )
+    }
+
+    func remoteNames(at url: URL) -> [String] {
+        guard let output = try? runGit(["remote"], in: url) else {
+            return []
+        }
+
+        return output
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { !$0.isEmpty }
     }
 
     func loadBranchNames(in url: URL, namespace: String) throws -> [String] {
@@ -435,7 +566,7 @@ private extension GitService {
     }
 
     func loadWorkingTreeStatus(in url: URL) -> WorkingTreeStatus? {
-        guard let output = try? runGit(["status", "--porcelain"], in: url) else {
+        guard let output = try? runGit(["--no-optional-locks", "status", "--porcelain"], in: url) else {
             return nil
         }
 
@@ -801,7 +932,7 @@ private extension GitService {
         _ = try runGit(
             ["fetch", "--prune", "--tags", "origin", "+refs/heads/*:refs/remotes/origin/*"],
             in: cacheURL,
-            environment: fetchEnvironment
+            environment: remoteCommandEnvironment
         )
 
         return cacheURL
@@ -934,6 +1065,10 @@ enum GitServiceError: LocalizedError {
     case invalidRemoteURL
     case destinationAlreadyExists(String)
     case readOnlyRepository
+    case noRemote
+    case detachedHead
+    case missingUpstream(String)
+    case ambiguousRemote
 
     var errorDescription: String? {
         switch self {
@@ -947,6 +1082,14 @@ enum GitServiceError: LocalizedError {
             return "A folder named “\(name)” already exists at the selected location."
         case .readOnlyRepository:
             return "This action requires a local repository with a writable working copy."
+        case .noRemote:
+            return "This repository has no configured remote."
+        case .detachedHead:
+            return "Check out a branch before pulling or pushing."
+        case let .missingUpstream(branch):
+            return "Branch “\(branch)” has no upstream branch. Push it first to create one."
+        case .ambiguousRemote:
+            return "This branch has no upstream and the repository has multiple remotes. Configure an upstream or default push remote, then try again."
         }
     }
 }
