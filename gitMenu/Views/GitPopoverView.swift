@@ -1,11 +1,14 @@
 import SwiftUI
 import AppKit
+import ServiceManagement
 
 struct GitPopoverView: View {
     let store: GitMenuStore
     var isExpandedLayout: Bool = false
 
     @Environment(\.openWindow) private var openWindow
+    @State private var launchAtStartupEnabled = LaunchAtStartup.isEnabled
+    @State private var launchAtStartupErrorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -76,6 +79,7 @@ struct GitPopoverView: View {
             }
         )
         .onAppear {
+            launchAtStartupEnabled = LaunchAtStartup.isEnabled
             store.repositoryViewDidAppear()
         }
         .onDisappear {
@@ -90,6 +94,16 @@ struct GitPopoverView: View {
             }
         } message: {
             Text(store.importErrorMessage ?? "Please choose a valid Git repository.")
+        }
+        .alert("Couldn’t Update Startup Setting", isPresented: Binding(
+            get: { launchAtStartupErrorMessage != nil },
+            set: { if !$0 { launchAtStartupErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                launchAtStartupErrorMessage = nil
+            }
+        } message: {
+            Text(launchAtStartupErrorMessage ?? "macOS rejected the startup setting change.")
         }
     }
 
@@ -116,25 +130,7 @@ struct GitPopoverView: View {
             .tint(GitLaneColor.main.color)
             .disabled(store.isImportingRepository)
 
-            if repository.source.isRemote {
-                toolbarButton(systemName: "arrow.clockwise", action: store.refreshSelectedRepository)
-                    .help("Fetch remote history")
-                    .disabled(store.isImportingRepository)
-            } else {
-                toolbarButton(systemName: "arrow.down.circle", action: store.pullSelectedRepository)
-                    .help(remoteActionHelp("Pull", for: repository))
-                    .disabled(store.isImportingRepository || !repository.hasRemote || repository.currentBranchName == nil)
-
-                toolbarButton(systemName: "arrow.up.circle", action: store.pushSelectedRepository)
-                    .help(remoteActionHelp("Push", for: repository))
-                    .disabled(store.isImportingRepository || !repository.hasRemote || repository.currentBranchName == nil)
-
-                Image(systemName: "bolt.badge.clock")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .foregroundStyle(.secondary)
-                    .help("Local repositories refresh automatically")
-            }
+            syncMenu(for: repository)
 /*
             toolbarButton(systemName: "line.3.horizontal.decrease", action: {})
                 .disabled(store.isImportingRepository)
@@ -145,12 +141,51 @@ struct GitPopoverView: View {
         .padding(.vertical, 7)
     }
 
+    private func syncMenu(for repository: Repository) -> some View {
+        Menu {
+            if !repository.source.isRemote {
+                Button("Pull Current Branch", systemImage: "arrow.down.circle") {
+                    store.pullSelectedRepository()
+                }
+                .disabled(!repository.hasRemote || repository.currentBranchName == nil)
+
+                Button("Push Current Branch", systemImage: "arrow.up.circle") {
+                    store.pushSelectedRepository()
+                }
+                .disabled(!repository.hasRemote || repository.currentBranchName == nil)
+
+                Divider()
+            }
+
+            Button(
+                repository.source.isRemote ? "Fetch Remote History" : "Refresh Repository",
+                systemImage: "arrow.clockwise"
+            ) {
+                store.refreshSelectedRepository()
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down.circle")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 22, height: 22)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(store.isImportingRepository)
+        .help("Pull, push, or refresh")
+    }
+
     private var footer: some View {
         HStack(spacing: 8) {
-            Text(store.selectedBranchName)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            Toggle("Launch at Startup", isOn: Binding(
+                get: { launchAtStartupEnabled },
+                set: updateLaunchAtStartup
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .font(.system(size: 11.5, weight: .medium))
+            .lineLimit(1)
+            .fixedSize()
+            .help("Open gitMenu automatically when you sign in")
 
             Spacer()
 
@@ -189,29 +224,6 @@ struct GitPopoverView: View {
         .padding(.horizontal, 8)
         .padding(.top, 8)
         .padding(.bottom, 3)
-    }
-
-    private func toolbarButton(systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 11.5, weight: .semibold))
-                .frame(width: 22, height: 22)
-               
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(0.84))
-    }
-
-    private func remoteActionHelp(_ action: String, for repository: Repository) -> String {
-        guard repository.hasRemote else {
-            return "No remote configured"
-        }
-
-        guard let branch = repository.currentBranchName else {
-            return "Check out a branch before \(action.lowercased())ing"
-        }
-
-        return "\(action) \(branch)"
     }
 
     private func openExpandedWindow() {
@@ -261,6 +273,35 @@ struct GitPopoverView: View {
         }
 
         return repository.url
+    }
+
+    private func updateLaunchAtStartup(_ isEnabled: Bool) {
+        do {
+            let status = try LaunchAtStartup.setEnabled(isEnabled)
+            launchAtStartupEnabled = LaunchAtStartup.isEnabled
+            if isEnabled, status == .requiresApproval {
+                launchAtStartupErrorMessage = "Approve gitMenu in System Settings > General > Login Items to launch it at startup."
+            }
+        } catch {
+            launchAtStartupEnabled = LaunchAtStartup.isEnabled
+            launchAtStartupErrorMessage = error.localizedDescription
+        }
+    }
+}
+
+private enum LaunchAtStartup {
+    static var isEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
+
+    static func setEnabled(_ isEnabled: Bool) throws -> SMAppService.Status {
+        if isEnabled {
+            try SMAppService.mainApp.register()
+        } else {
+            try SMAppService.mainApp.unregister()
+        }
+
+        return SMAppService.mainApp.status
     }
 }
 

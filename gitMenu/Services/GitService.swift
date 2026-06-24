@@ -11,6 +11,7 @@ nonisolated protocol GitServiceProtocol: Sendable {
     func commitAll(in repository: Repository, message: String) throws -> Repository
     func pull(_ repository: Repository) throws -> Repository
     func push(_ repository: Repository) throws -> Repository
+    func push(commitID: String, to branch: String, in repository: Repository) throws -> Repository
     func checkout(branch: String, in repository: Repository) throws -> Repository
     func merge(branch: String, into repository: Repository) throws -> Repository
     func cherryPick(commitID: String, in repository: Repository) throws -> Repository
@@ -203,6 +204,66 @@ extension GitService {
         )
     }
 
+    func push(commitID: String, to branch: String, in repository: Repository) throws -> Repository {
+        try validateLocalRepositoryForRemoteOperation(repository)
+
+        let branch = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !branch.isEmpty else {
+            throw GitServiceError.invalidBranch
+        }
+
+        let localBranchRef = "refs/heads/\(branch)"
+
+        do {
+            _ = try runGit(["show-ref", "--verify", "--quiet", localBranchRef], in: repository.url)
+        } catch {
+            throw GitServiceError.branchNotFound(branch)
+        }
+
+        do {
+            _ = try runGit(["cat-file", "-e", "\(commitID)^{commit}"], in: repository.url)
+        } catch {
+            throw GitServiceError.commitNotFound
+        }
+
+        do {
+            _ = try runGit(["merge-base", "--is-ancestor", commitID, localBranchRef], in: repository.url)
+        } catch {
+            throw GitServiceError.commitNotOnBranch(branch)
+        }
+
+        let destination = try pushDestination(for: branch, in: repository)
+        let remoteBranchRef = "refs/heads/\(destination.branch)"
+
+        _ = try runGit(
+            ["push", destination.remote, "\(commitID):\(remoteBranchRef)"],
+            in: repository.url,
+            environment: remoteCommandEnvironment
+        )
+
+        if !destination.hasUpstream {
+            _ = try runGit(
+                [
+                    "fetch",
+                    destination.remote,
+                    "\(remoteBranchRef):refs/remotes/\(destination.remote)/\(destination.branch)"
+                ],
+                in: repository.url,
+                environment: remoteCommandEnvironment
+            )
+            _ = try runGit(
+                ["branch", "--set-upstream-to=\(destination.remote)/\(destination.branch)", branch],
+                in: repository.url
+            )
+        }
+
+        return try openLocalRepository(
+            at: repository.url,
+            selectedBranch: nil,
+            updatedText: "Pushed \(String(commitID.prefix(7))) just now"
+        )
+    }
+
     func checkout(branch: String, in repository: Repository) throws -> Repository {
         guard !repository.source.isRemote else {
             throw GitServiceError.readOnlyRepository
@@ -336,6 +397,38 @@ private extension GitService {
         }
 
         throw GitServiceError.ambiguousRemote
+    }
+
+    func pushDestination(
+        for branch: String,
+        in repository: Repository
+    ) throws -> (remote: String, branch: String, hasUpstream: Bool) {
+        let remotes = remoteNames(at: repository.url)
+        let configuredRemote = try? runGit(
+            ["config", "--get", "branch.\(branch).remote"],
+            in: repository.url
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let configuredMergeRef = try? runGit(
+            ["config", "--get", "branch.\(branch).merge"],
+            in: repository.url
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let configuredRemote,
+           remotes.contains(configuredRemote),
+           let configuredMergeRef,
+           configuredMergeRef.hasPrefix("refs/heads/") {
+            return (
+                configuredRemote,
+                String(configuredMergeRef.dropFirst("refs/heads/".count)),
+                true
+            )
+        }
+
+        return (
+            try preferredPushRemote(in: repository, branch: branch),
+            branch,
+            false
+        )
     }
 
     func normalizedRemoteURL(_ remoteURL: String) throws -> String {
@@ -1069,6 +1162,10 @@ enum GitServiceError: LocalizedError {
     case detachedHead
     case missingUpstream(String)
     case ambiguousRemote
+    case invalidBranch
+    case branchNotFound(String)
+    case commitNotFound
+    case commitNotOnBranch(String)
 
     var errorDescription: String? {
         switch self {
@@ -1090,6 +1187,14 @@ enum GitServiceError: LocalizedError {
             return "Branch “\(branch)” has no upstream branch. Push it first to create one."
         case .ambiguousRemote:
             return "This branch has no upstream and the repository has multiple remotes. Configure an upstream or default push remote, then try again."
+        case .invalidBranch:
+            return "Choose a valid local branch for this push."
+        case let .branchNotFound(branch):
+            return "Local branch “\(branch)” no longer exists."
+        case .commitNotFound:
+            return "This commit is no longer available in the local repository."
+        case let .commitNotOnBranch(branch):
+            return "This commit is not part of branch “\(branch)”. Choose another branch."
         }
     }
 }

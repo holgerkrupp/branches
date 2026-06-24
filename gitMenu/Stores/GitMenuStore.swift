@@ -226,6 +226,16 @@ final class GitMenuStore {
         }
     }
 
+    func push(commitID: String, to branch: String) {
+        guard let repository = selectedRepository else { return }
+        performRepositoryMutation(
+            progressText: "Pushing \(String(commitID.prefix(7))) to \(branch)...",
+            repository: repository
+        ) { service, repository in
+            try service.push(commitID: commitID, to: branch, in: repository)
+        }
+    }
+
     func checkout(branch: String) {
         guard let repository = selectedRepository else { return }
         performRepositoryMutation(progressText: "Checking out \(branch)...", repository: repository) { service, repository in

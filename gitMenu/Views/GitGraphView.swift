@@ -101,6 +101,17 @@ struct GitGraphView: View {
             if !repository.source.isRemote {
                 Divider()
 
+                if repository.hasRemote, !pushBranches(for: commit).isEmpty {
+                    Menu("Push Commit", systemImage: "arrow.up.circle") {
+                        ForEach(pushBranches(for: commit), id: \.self) { branch in
+                            Button("To \(shortBranchName(branch))") {
+                                store.push(commitID: commit.id, to: branch)
+                            }
+                        }
+                    }
+                    .disabled(store.isImportingRepository)
+                }
+
                 Button("Create Branch from Commit...", systemImage: "arrow.triangle.branch") {
                     guard let branchName = TextInputPrompt.request(
                         title: "Create Branch",
@@ -145,6 +156,37 @@ struct GitGraphView: View {
                 }
             }
         }
+    }
+
+    private func pushBranches(for commit: GitCommit) -> [String] {
+        var branches: [String] = []
+
+        if store.selectedBranchName != GitMenuStore.allBranchesName,
+           repository.branches.contains(where: { $0.name == store.selectedBranchName }) {
+            branches.append(store.selectedBranchName)
+        }
+
+        branches.append(contentsOf: commit.branchLabels.filter { label in
+            repository.branches.contains(where: { $0.name == label })
+        })
+
+        if let currentBranchName = repository.currentBranchName {
+            branches.append(currentBranchName)
+        }
+
+        return branches.reduce(into: []) { uniqueBranches, branch in
+            if !uniqueBranches.contains(branch) {
+                uniqueBranches.append(branch)
+            }
+        }
+    }
+
+    private func shortBranchName(_ branch: String) -> String {
+        guard branch.count > 24 else {
+            return branch
+        }
+
+        return String(branch.prefix(21)) + "..."
     }
 
     private func copyToPasteboard(_ value: String) {
