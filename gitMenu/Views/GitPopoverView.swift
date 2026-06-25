@@ -17,6 +17,7 @@ struct GitPopoverView: View {
                 selectedRepositoryID: store.selectedRepositoryID,
                 isImportingRepository: store.isImportingRepository,
                 onSelect: store.selectRepository,
+                onRemove: store.removeRepository,
                 onOpenRepository: openRepository,
                 onBrowseRemoteRepository: openRemoteRepository,
                 onCloneRepository: cloneRepository

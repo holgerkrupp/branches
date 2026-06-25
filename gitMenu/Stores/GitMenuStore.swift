@@ -203,6 +203,32 @@ final class GitMenuStore {
         }
     }
 
+    func removeRepository(_ repository: Repository) {
+        guard let index = repositories.firstIndex(where: { $0.id == repository.id }) else {
+            return
+        }
+
+        let removed = repositories.remove(at: index)
+
+        if case .local = removed.source {
+            stopAccess(for: removed.url)
+        }
+
+        refreshSignatures.removeValue(forKey: removed.id)
+
+        if selectedRepositoryID == removed.id {
+            selectedRepositoryID = repositories.first?.id
+            selectedBranchName = Self.allBranchesName
+        }
+
+        persistRepositories()
+
+        if isRepositoryViewVisible {
+            updateRepositoryChangeMonitor()
+            scheduleSelectedRepositoryRefresh(delay: .zero)
+        }
+    }
+
     func commitWorkingTree(message: String) {
         guard let repository = selectedRepository else { return }
         performRepositoryMutation(progressText: "Creating commit...", repository: repository) { service, repository in

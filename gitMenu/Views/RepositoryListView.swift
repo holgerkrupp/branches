@@ -6,6 +6,7 @@ struct RepositoryListView: View {
     let selectedRepositoryID: Repository.ID?
     let isImportingRepository: Bool
     let onSelect: (Repository) -> Void
+    let onRemove: (Repository) -> Void
     let onOpenRepository: () -> Void
     let onBrowseRemoteRepository: () -> Void
     let onCloneRepository: () -> Void
@@ -99,6 +100,11 @@ struct RepositoryListView: View {
             )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("Remove from List", role: .destructive) {
+                onRemove(repository)
+            }
+        }
     }
 
     private var actionRow: some View {
