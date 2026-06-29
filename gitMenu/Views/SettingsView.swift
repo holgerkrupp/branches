@@ -1,12 +1,15 @@
+import StoreKit
 import SwiftUI
 
 struct SettingsView: View {
     @Bindable var credentialsStore: HostCredentialsStore
+    @Bindable var subscriptionManager: SubscriptionManager
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
+                subscriptionCard
 
                 ForEach($credentialsStore.accounts) { $account in
                     accountCard(account: $account)
@@ -23,18 +26,89 @@ struct SettingsView: View {
         }
         .frame(minWidth: 620, minHeight: 540)
         .background(Color(nsColor: .windowBackgroundColor))
+        .task {
+            subscriptionManager.start()
+        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Accounts")
+            Text("Remote Git")
                 .font(.system(size: 22, weight: .semibold))
 
-            Text("Save tokens for GitHub, GitLab, Codeberg, or your own Git host. These credentials are ready for remote fetch and clone integrations.")
+            Text("Local repositories stay free. Remote browsing, clone, pull, and push use a subscription with a free trial.")
                 .font(.system(size: 13.5))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 520, alignment: .leading)
         }
+    }
+
+    private var subscriptionCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Remote Git Pro")
+                        .font(.system(size: 15, weight: .semibold))
+
+                    Text(subscriptionManager.accessDescription)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(subscriptionManager.canUseRemoteFeatures ? .green : .secondary)
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 12) {
+                if !subscriptionManager.hasStartedTrial {
+                    Button("Start Free Trial") {
+                        subscriptionManager.startTrial()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+                if let product = subscriptionManager.products.first {
+                    Button("Subscribe for \(product.displayPrice)") {
+                        Task {
+                            await subscriptionManager.purchase(product)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(subscriptionManager.isProcessingPurchase)
+                }
+
+                Button("Restore Purchases") {
+                    Task {
+                        await subscriptionManager.restorePurchases()
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button("Manage") {
+                    subscriptionManager.openManageSubscriptions()
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let message = subscriptionManager.purchaseErrorMessage, !message.isEmpty {
+                Text(message)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
     }
 
     @ViewBuilder

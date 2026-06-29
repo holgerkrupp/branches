@@ -6,27 +6,31 @@ struct MenuBarGitApp: App {
     @AppStorage("gitHostAccounts") private var gitHostAccountsData: Data = Data()
     @State private var store: GitMenuStore
     @State private var credentialsStore: HostCredentialsStore
+    @State private var subscriptionManager: SubscriptionManager
 
     init() {
         let persistedData = UserDefaults.standard.data(forKey: "recentRepositories")
             ?? UserDefaults.standard.data(forKey: "recentRepositoryBookmarks")
             ?? Data()
         let credentialsData = UserDefaults.standard.data(forKey: "gitHostAccounts") ?? Data()
+        let subscriptionManager = SubscriptionManager()
         _store = State(
             initialValue: GitMenuStore(
                 service: GitService.mock,
+                subscriptionManager: subscriptionManager,
                 persistedRepositoriesData: persistedData
             )
         )
         _credentialsStore = State(
             initialValue: HostCredentialsStore(persistedData: credentialsData)
         )
+        _subscriptionManager = State(initialValue: subscriptionManager)
     }
 
     var body: some Scene {
         /*
         Window("gitMenu", id: "main") {
-            ContentView(store: store)
+            ContentView(store: store, subscriptionManager: subscriptionManager)
                 .persistedWindowSize(
                     widthKey: "mainWindowWidth",
                     heightKey: "mainWindowHeight",
@@ -41,7 +45,7 @@ struct MenuBarGitApp: App {
         .windowResizability(.contentMinSize)
 */
         MenuBarExtra("gitMenu", image: "git-branch.symbols") {
-            GitPopoverView(store: store)
+            GitPopoverView(store: store, subscriptionManager: subscriptionManager)
                 .persistedWindowSize(
                     widthKey: "menuPanelWidth",
                     heightKey: "menuPanelHeight",
@@ -52,12 +56,18 @@ struct MenuBarGitApp: App {
                 .onChange(of: store.persistedRepositoriesData, initial: true) { _, newValue in
                     recentRepositoriesData = newValue
                 }
+                .task {
+                    subscriptionManager.start()
+                }
         }
         .menuBarExtraStyle(.window)
         .windowResizability(.contentMinSize)
 
         Settings {
-            SettingsView(credentialsStore: credentialsStore)
+            SettingsView(
+                credentialsStore: credentialsStore,
+                subscriptionManager: subscriptionManager
+            )
                 .onChange(of: credentialsStore.persistedData, initial: true) { _, newValue in
                     gitHostAccountsData = newValue
                 }

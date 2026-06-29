@@ -4,6 +4,7 @@ import SwiftUI
 struct GitGraphView: View {
     let repository: Repository
     let store: GitMenuStore
+    @Bindable var subscriptionManager: SubscriptionManager
     let commits: [GitCommit]
     let workingTreeStatus: WorkingTreeStatus?
     private let graphWidth: CGFloat = 118
@@ -105,7 +106,7 @@ struct GitGraphView: View {
                     Menu("Push Commit", systemImage: "arrow.up.circle") {
                         ForEach(pushBranches(for: commit), id: \.self) { branch in
                             Button("To \(shortBranchName(branch))") {
-                                store.push(commitID: commit.id, to: branch)
+                                pushCommit(commit.id, to: branch)
                             }
                         }
                     }
@@ -192,5 +193,16 @@ struct GitGraphView: View {
     private func copyToPasteboard(_ value: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
+    }
+
+    private func pushCommit(_ commitID: String, to branch: String) {
+        guard subscriptionManager.requestAccess(
+            to: .pushCommit,
+            onUnlock: { pushCommit(commitID, to: branch) }
+        ) else {
+            return
+        }
+
+        store.push(commitID: commitID, to: branch)
     }
 }

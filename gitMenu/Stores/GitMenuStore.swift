@@ -15,6 +15,7 @@ final class GitMenuStore {
     var importProgressText = "Loading repository..."
 
     private let service: GitServiceProtocol
+    private let subscriptionManager: SubscriptionManager
     private var securityScopedPaths: Set<String> = []
     private var refreshSignatures: [Repository.ID: String] = [:]
     private var repositoryChangeMonitor: RepositoryChangeMonitor?
@@ -23,8 +24,13 @@ final class GitMenuStore {
     private var repositoryViewVisibilityCount = 0
     private var isCheckingForRepositoryChanges = false
 
-    init(service: GitServiceProtocol, persistedRepositoriesData: Data = Data()) {
+    init(
+        service: GitServiceProtocol,
+        subscriptionManager: SubscriptionManager,
+        persistedRepositoriesData: Data = Data()
+    ) {
         self.service = service
+        self.subscriptionManager = subscriptionManager
         self.persistedRepositoriesData = persistedRepositoriesData
         self.repositories = []
         self.selectedRepositoryID = nil
@@ -64,6 +70,13 @@ final class GitMenuStore {
             return
         }
 
+        let canUseRemoteFeatures = subscriptionManager.canUseRemoteFeatures
+        if !canUseRemoteFeatures,
+           selectedRepository?.source.isRemote == true,
+           !subscriptionManager.requestAccess(to: .refresh) {
+            return
+        }
+
         let repositories = self.repositories
         let selectedRepositoryID = self.selectedRepositoryID
         let activeBranchSelection = self.activeBranchSelection
@@ -73,6 +86,10 @@ final class GitMenuStore {
             do {
                 let refreshedRepositories = try await Task.detached(priority: .userInitiated) {
                     try repositories.map { repository in
+                        if repository.source.isRemote, !canUseRemoteFeatures {
+                            return repository
+                        }
+
                         let branch = repository.id == selectedRepositoryID ? activeBranchSelection : nil
                         return try service.refreshRepository(repository, selectedBranch: branch)
                             .preservingIdentity(from: repository)
@@ -98,6 +115,10 @@ final class GitMenuStore {
         }
 
         let repository = repositories[repositoryIndex]
+        if repository.source.isRemote,
+           !subscriptionManager.requestAccess(to: .refresh) {
+            return
+        }
         let selectedBranch = activeBranchSelection
         let service = self.service
         let progressText = repository.source.isRemote ? "Fetching remote history..." : "Refreshing history..."
@@ -155,6 +176,7 @@ final class GitMenuStore {
 
     func addRemoteRepository(from remoteURL: String) {
         guard !isImportingRepository else { return }
+        guard subscriptionManager.requestAccess(to: .browse) else { return }
 
         let service = self.service
 
@@ -177,6 +199,7 @@ final class GitMenuStore {
 
     func cloneRepository(from remoteURL: String, into parentURL: URL) {
         guard !isImportingRepository else { return }
+        guard subscriptionManager.requestAccess(to: .clone) else { return }
 
         let startedAccess = startAccessIfNeeded(for: parentURL)
         let service = self.service
@@ -238,6 +261,7 @@ final class GitMenuStore {
 
     func pullSelectedRepository() {
         guard let repository = selectedRepository else { return }
+        guard subscriptionManager.requestAccess(to: .pull) else { return }
         let branch = repository.currentBranchName ?? "current branch"
         performRepositoryMutation(progressText: "Pulling \(branch)...", repository: repository) { service, repository in
             try service.pull(repository)
@@ -246,6 +270,7 @@ final class GitMenuStore {
 
     func pushSelectedRepository() {
         guard let repository = selectedRepository else { return }
+        guard subscriptionManager.requestAccess(to: .push) else { return }
         let branch = repository.currentBranchName ?? "current branch"
         performRepositoryMutation(progressText: "Pushing \(branch)...", repository: repository) { service, repository in
             try service.push(repository)
@@ -254,6 +279,7 @@ final class GitMenuStore {
 
     func push(commitID: String, to branch: String) {
         guard let repository = selectedRepository else { return }
+        guard subscriptionManager.requestAccess(to: .pushCommit) else { return }
         performRepositoryMutation(
             progressText: "Pushing \(String(commitID.prefix(7))) to \(branch)...",
             repository: repository
@@ -376,6 +402,11 @@ final class GitMenuStore {
         }
 
         let repository = repositories[repositoryIndex]
+        if repository.source.isRemote,
+           !subscriptionManager.requestAccess(to: .refresh) {
+            return
+        }
+
         let selectedBranch = activeBranchSelection
         let service = self.service
 
@@ -609,10 +640,15 @@ final class GitMenuStore {
 
         let service = self.service
         let resolvedReferences = resolvePersistedReferences(from: persistedRepositoriesData)
+        let includeRemoteRepositories = subscriptionManager.canUseRemoteFeatures
 
         Task { [weak self] in
             let restoredRepositories = await Task.detached(priority: .userInitiated) {
-                Self.loadPersistedRepositories(from: resolvedReferences, service: service)
+                Self.loadPersistedRepositories(
+                    from: resolvedReferences,
+                    service: service,
+                    includeRemoteRepositories: includeRemoteRepositories
+                )
             }.value
 
             guard let self else { return }
@@ -668,7 +704,8 @@ final class GitMenuStore {
 
     nonisolated private static func loadPersistedRepositories(
         from references: [ResolvedPersistedReference],
-        service: GitServiceProtocol
+        service: GitServiceProtocol,
+        includeRemoteRepositories: Bool
     ) -> [Repository] {
         var restoredRepositories: [Repository] = []
 
@@ -679,6 +716,10 @@ final class GitMenuStore {
                     restoredRepositories.append(repository)
                 }
             case let .remote(remoteURL):
+                guard includeRemoteRepositories else {
+                    continue
+                }
+
                 if let repository = try? service.openRemoteRepository(from: remoteURL, selectedBranch: nil) {
                     restoredRepositories.append(repository)
                 }
