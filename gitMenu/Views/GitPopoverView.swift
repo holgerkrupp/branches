@@ -4,6 +4,7 @@ import ServiceManagement
 
 struct GitPopoverView: View {
     let store: GitMenuStore
+    @Bindable var subscriptionManager: SubscriptionManager
     var isExpandedLayout: Bool = false
 
     @Environment(\.openWindow) private var openWindow
@@ -32,6 +33,7 @@ struct GitPopoverView: View {
                     GitGraphView(
                         repository: repository,
                         store: store,
+                        subscriptionManager: subscriptionManager,
                         commits: store.visibleCommits,
                         workingTreeStatus: repository.workingTreeStatus
                     )
@@ -106,6 +108,9 @@ struct GitPopoverView: View {
         } message: {
             Text(launchAtStartupErrorMessage ?? "macOS rejected the startup setting change.")
         }
+        .sheet(isPresented: $subscriptionManager.isPaywallPresented) {
+            SubscriptionPaywallView(subscriptionManager: subscriptionManager)
+        }
     }
 
     @ViewBuilder
@@ -146,12 +151,16 @@ struct GitPopoverView: View {
         Menu {
             if !repository.source.isRemote {
                 Button("Pull Current Branch", systemImage: "arrow.down.circle") {
-                    store.pullSelectedRepository()
+                    if subscriptionManager.requestAccess(to: .pull, onUnlock: pullSelectedRepository) {
+                        store.pullSelectedRepository()
+                    }
                 }
                 .disabled(!repository.hasRemote || repository.currentBranchName == nil)
 
                 Button("Push Current Branch", systemImage: "arrow.up.circle") {
-                    store.pushSelectedRepository()
+                    if subscriptionManager.requestAccess(to: .push, onUnlock: pushSelectedRepository) {
+                        store.pushSelectedRepository()
+                    }
                 }
                 .disabled(!repository.hasRemote || repository.currentBranchName == nil)
 
@@ -162,7 +171,13 @@ struct GitPopoverView: View {
                 repository.source.isRemote ? "Fetch Remote History" : "Refresh Repository",
                 systemImage: "arrow.clockwise"
             ) {
-                store.refreshSelectedRepository()
+                if repository.source.isRemote {
+                    if subscriptionManager.requestAccess(to: .refresh, onUnlock: refreshSelectedRepository) {
+                        store.refreshSelectedRepository()
+                    }
+                } else {
+                    store.refreshSelectedRepository()
+                }
             }
         } label: {
             Image(systemName: "arrow.up.arrow.down.circle")
@@ -247,7 +262,11 @@ struct GitPopoverView: View {
     }
 
     private func cloneRepository() {
-        guard !store.isImportingRepository,
+        guard !store.isImportingRepository else {
+            return
+        }
+
+        guard subscriptionManager.requestAccess(to: .clone, onUnlock: cloneRepository),
               let remoteURL = RemoteRepositoryPrompt.requestURL(mode: .clone),
               let destinationURL = RepositoryOpenPanel.chooseCloneDestination(
                 startingAt: panelStartingDirectory?.deletingLastPathComponent()
@@ -259,12 +278,40 @@ struct GitPopoverView: View {
     }
 
     private func openRemoteRepository() {
-        guard !store.isImportingRepository,
+        guard !store.isImportingRepository else {
+            return
+        }
+
+        guard subscriptionManager.requestAccess(to: .browse, onUnlock: openRemoteRepository),
               let remoteURL = RemoteRepositoryPrompt.requestURL(mode: .browse) else {
             return
         }
 
         store.addRemoteRepository(from: remoteURL)
+    }
+
+    private func pullSelectedRepository() {
+        guard !store.isImportingRepository else {
+            return
+        }
+
+        store.pullSelectedRepository()
+    }
+
+    private func pushSelectedRepository() {
+        guard !store.isImportingRepository else {
+            return
+        }
+
+        store.pushSelectedRepository()
+    }
+
+    private func refreshSelectedRepository() {
+        guard !store.isImportingRepository else {
+            return
+        }
+
+        store.refreshSelectedRepository()
     }
 
     private var panelStartingDirectory: URL? {
@@ -307,6 +354,13 @@ private enum LaunchAtStartup {
 }
 
 #Preview {
-    GitPopoverView(store: GitMenuStore(service: GitService.mock))
+    let subscriptionManager = SubscriptionManager()
+    GitPopoverView(
+        store: GitMenuStore(
+            service: GitService.mock,
+            subscriptionManager: subscriptionManager
+        ),
+        subscriptionManager: subscriptionManager
+    )
         .frame(width: 500, height: 720)
 }
