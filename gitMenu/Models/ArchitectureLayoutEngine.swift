@@ -41,7 +41,7 @@ public struct ArchitectureGroup: Identifiable, Equatable {
     public var groupIDs: [String]
     public var padding: CGFloat
 
-    public init(id: String, nodeIDs: [String] = [], groupIDs: [String] = [], padding: CGFloat = 24) {
+    public init(id: String, groupIDs: [String] = [], nodeIDs: [String] = [], padding: CGFloat = 24) {
         self.id = id
         self.nodeIDs = nodeIDs
         self.groupIDs = groupIDs

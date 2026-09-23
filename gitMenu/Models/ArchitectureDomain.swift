@@ -28,7 +28,8 @@ public struct ArchitectureComponent: Codable, Hashable, Sendable, Identifiable {
     public let summary: String
     public let sourcePaths: [String]
     public let parentID: String?
-    public init(id: String, name: String, kind: ArchitectureComponentKind, summary: String = "", sourcePaths: [String] = [], parentID: String? = nil) { self.id = id; self.name = name; self.kind = kind; self.summary = summary; self.sourcePaths = sourcePaths; self.parentID = parentID }
+    public let layer: String
+    public init(id: String, name: String, kind: ArchitectureComponentKind, summary: String = "", sourcePaths: [String] = [], parentID: String? = nil, layer: String = "unknown") { self.id = id; self.name = name; self.kind = kind; self.summary = summary; self.sourcePaths = sourcePaths; self.parentID = parentID; self.layer = layer }
 }
 
 public struct ArchitectureRelationship: Codable, Hashable, Sendable, Identifiable {
