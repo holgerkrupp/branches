@@ -8,7 +8,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [.library(name: "GitMenuArchitecture", targets: ["GitMenuArchitecture"])],
     targets: [
-        .target(name: "GitMenuArchitecture", path: "gitMenu/Models", sources: ["ArchitectureLayoutEngine.swift", "RepositoryStructure.swift"]),
+        .target(name: "GitMenuArchitecture", path: "gitMenu/Models", sources: ["ArchitectureLayoutEngine.swift", "RepositoryStructure.swift", "ArchitectureDomain.swift"]),
         .target(name: "RepositoryStructureService", dependencies: ["GitMenuArchitecture"], path: "gitMenu/Services", sources: ["RepositoryStructureService.swift"]),
         .testTarget(name: "GitMenuArchitectureTests", dependencies: ["GitMenuArchitecture", "RepositoryStructureService"], path: "Tests")
     ]
