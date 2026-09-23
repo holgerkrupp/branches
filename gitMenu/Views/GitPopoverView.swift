@@ -10,6 +10,7 @@ struct GitPopoverView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var launchAtStartupEnabled = LaunchAtStartup.isEnabled
     @State private var launchAtStartupErrorMessage: String?
+    @State private var visualizationMode = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,13 +31,7 @@ struct GitPopoverView: View {
             if let repository = store.selectedRepository {
                 VStack(spacing: 0) {
                     toolbar(for: repository)
-                    GitGraphView(
-                        repository: repository,
-                        store: store,
-                        subscriptionManager: subscriptionManager,
-                        commits: store.visibleCommits,
-                        workingTreeStatus: repository.workingTreeStatus
-                    )
+                    if visualizationMode == 0 { GitGraphView(repository: repository, store: store, subscriptionManager: subscriptionManager, commits: store.visibleCommits, workingTreeStatus: repository.workingTreeStatus) } else { ArchitectureView(repository: repository) }
                 }
             } else if store.isImportingRepository {
                 VStack(spacing: 12) {
@@ -121,6 +116,8 @@ struct GitPopoverView: View {
                 .lineLimit(1)
 
             Spacer(minLength: 0)
+
+            Picker("View", selection: $visualizationMode) { Text("History").tag(0); Text("Architecture").tag(1) }.pickerStyle(.segmented).frame(width: 170)
 
             Picker("Branch", selection: Binding(
                 get: { store.selectedBranchName },

@@ -52,3 +52,52 @@ public struct RepositoryArchitecture: Codable, Hashable, Sendable {
     public let relationships: [ArchitectureRelationship]
     public init(repositoryID: String, revision: String, summary: String = "", components: [ArchitectureComponent] = [], relationships: [ArchitectureRelationship] = [], schema: Int = RepositoryArchitecture.schemaVersion) { self.schema = schema; self.repositoryID = repositoryID; self.revision = revision; self.summary = summary; self.components = components; self.relationships = relationships }
 }
+
+public struct ArchitectureComponentChange: Codable, Hashable, Sendable, Identifiable {
+    public let id: String
+    public let before: ArchitectureComponent?
+    public let after: ArchitectureComponent?
+    public init(id: String, before: ArchitectureComponent?, after: ArchitectureComponent?) { self.id = id; self.before = before; self.after = after }
+}
+
+public struct ArchitectureRelationshipChange: Codable, Hashable, Sendable, Identifiable {
+    public let id: String
+    public let before: ArchitectureRelationship?
+    public let after: ArchitectureRelationship?
+    public init(id: String, before: ArchitectureRelationship?, after: ArchitectureRelationship?) { self.id = id; self.before = before; self.after = after }
+}
+
+public struct ArchitectureComparison: Codable, Hashable, Sendable {
+    public let fromRevision: String
+    public let toRevision: String
+    public let addedComponents: [ArchitectureComponent]
+    public let removedComponents: [ArchitectureComponent]
+    public let changedComponents: [ArchitectureComponentChange]
+    public let addedRelationships: [ArchitectureRelationship]
+    public let removedRelationships: [ArchitectureRelationship]
+    public let changedRelationships: [ArchitectureRelationshipChange]
+
+    public init(from: RepositoryArchitecture, to: RepositoryArchitecture) {
+        fromRevision = from.revision; toRevision = to.revision
+        let oldComponents = Dictionary(uniqueKeysWithValues: from.components.map { ($0.id, $0) })
+        let newComponents = Dictionary(uniqueKeysWithValues: to.components.map { ($0.id, $0) })
+        let oldComponentIDs = Set(oldComponents.keys)
+        let newComponentIDs = Set(newComponents.keys)
+        addedComponents = newComponentIDs.subtracting(oldComponentIDs).sorted().compactMap { newComponents[$0] }
+        removedComponents = oldComponentIDs.subtracting(newComponentIDs).sorted().compactMap { oldComponents[$0] }
+        changedComponents = oldComponentIDs.intersection(newComponentIDs).sorted().compactMap { id in
+            guard oldComponents[id] != newComponents[id] else { return nil }
+            return ArchitectureComponentChange(id: id, before: oldComponents[id], after: newComponents[id])
+        }
+        let oldRelationships = Dictionary(uniqueKeysWithValues: from.relationships.map { ($0.id, $0) })
+        let newRelationships = Dictionary(uniqueKeysWithValues: to.relationships.map { ($0.id, $0) })
+        let oldRelationshipIDs = Set(oldRelationships.keys)
+        let newRelationshipIDs = Set(newRelationships.keys)
+        addedRelationships = newRelationshipIDs.subtracting(oldRelationshipIDs).sorted().compactMap { newRelationships[$0] }
+        removedRelationships = oldRelationshipIDs.subtracting(newRelationshipIDs).sorted().compactMap { oldRelationships[$0] }
+        changedRelationships = oldRelationshipIDs.intersection(newRelationshipIDs).sorted().compactMap { id in
+            guard oldRelationships[id] != newRelationships[id] else { return nil }
+            return ArchitectureRelationshipChange(id: id, before: oldRelationships[id], after: newRelationships[id])
+        }
+    }
+}

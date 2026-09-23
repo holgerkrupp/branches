@@ -9,7 +9,7 @@ let package = Package(
     products: [.library(name: "GitMenuArchitecture", targets: ["GitMenuArchitecture"])],
     targets: [
         .target(name: "GitMenuArchitecture", path: "gitMenu/Models", sources: ["ArchitectureLayoutEngine.swift", "RepositoryStructure.swift", "ArchitectureDomain.swift", "RepositoryAnalysis.swift"]),
-        .target(name: "RepositoryStructureService", dependencies: ["GitMenuArchitecture"], path: "gitMenu/Services", sources: ["RepositoryStructureService.swift", "SwiftRepositoryAnalyzer.swift", "RepositoryArchitectureService.swift"]),
+        .target(name: "RepositoryStructureService", dependencies: ["GitMenuArchitecture"], path: "gitMenu/Services", sources: ["RepositoryStructureService.swift", "SwiftRepositoryAnalyzer.swift", "RepositoryArchitectureService.swift", "ArchitectureComparisonService.swift", "HistoricalRepositorySnapshotService.swift"]),
         .testTarget(name: "GitMenuArchitectureTests", dependencies: ["GitMenuArchitecture", "RepositoryStructureService"], path: "Tests")
     ]
 )

@@ -4,10 +4,13 @@ import Foundation
 @MainActor
 final class RepositoryChangeMonitor {
     private let onChange: () -> Void
+    private let debounce: Duration
     private var stream: FSEventStreamRef?
     private var streamRetainsSelf = false
+    private var pendingChange: Task<Void, Never>?
 
-    init(onChange: @escaping () -> Void) {
+    init(debounce: Duration = .milliseconds(250), onChange: @escaping () -> Void) {
+        self.debounce = debounce
         self.onChange = onChange
     }
 
@@ -60,6 +63,8 @@ final class RepositoryChangeMonitor {
     }
 
     func stopMonitoring() {
+        pendingChange?.cancel()
+        pendingChange = nil
         if let stream {
             FSEventStreamStop(stream)
             FSEventStreamInvalidate(stream)
@@ -71,7 +76,15 @@ final class RepositoryChangeMonitor {
     }
 
     fileprivate func repositoryDidChange() {
-        onChange()
+        pendingChange?.cancel()
+        pendingChange = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: debounce)
+                guard !Task.isCancelled else { return }
+                onChange()
+            } catch { }
+        }
     }
 
     private func releaseStreamRetain() {
