@@ -60,6 +60,20 @@ final class ArchitectureLayoutEngineTests: XCTestCase {
         XCTAssertEqual(edge.points.last, layout.node("b")!.frame.topCenter)
         XCTAssertTrue(edge.points.allSatisfy { layout.bounds.insetBy(dx: 0, dy: 0).contains($0) })
     }
+
+    func testDuplicateIdentifiersAreCoalescedInsteadOfCrashing() {
+        let graph = ArchitectureGraph(
+            nodes: [ArchitectureNode(id: "a"), ArchitectureNode(id: "a"), ArchitectureNode(id: "b")],
+            edges: [ArchitectureEdge(id: "ab", source: "a", destination: "b"), ArchitectureEdge(id: "ab", source: "a", destination: "b")],
+            groups: [ArchitectureGroup(id: "all", nodeIDs: ["a", "b"]), ArchitectureGroup(id: "all", nodeIDs: ["a", "b"])]
+        )
+
+        let layout = engine.layout(graph)
+
+        XCTAssertEqual(layout.nodes.map(\.id), ["a", "b"])
+        XCTAssertEqual(layout.edges.map(\.id), ["ab"])
+        XCTAssertEqual(layout.groups.map(\.id), ["all"])
+    }
 }
 
 private extension CGRect {

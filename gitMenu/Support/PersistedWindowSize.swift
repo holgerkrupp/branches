@@ -65,7 +65,7 @@ private struct WindowSizeObserver: NSViewRepresentable {
 
     func updateNSView(_ nsView: TrackingView, context: Context) {
         nsView.onSizeChange = onSizeChange
-        nsView.reportCurrentSize()
+        nsView.scheduleSizeReport()
     }
 }
 
@@ -86,25 +86,24 @@ private final class TrackingView: NSView {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.reportCurrentSize()
+            self?.scheduleSizeReport()
         }
 
-        DispatchQueue.main.async { [weak self] in
-            self?.reportCurrentSize()
-        }
+        scheduleSizeReport()
     }
 
     deinit {
         detachObserver()
     }
 
-    func reportCurrentSize() {
-        guard let window else {
-            return
-        }
+    func scheduleSizeReport() {
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(reportCurrentSize), object: nil)
+        perform(#selector(reportCurrentSize), with: nil, afterDelay: 0)
+    }
 
-        let size = window.contentView?.bounds.size ?? bounds.size
-        onSizeChange?(size)
+    @objc private func reportCurrentSize() {
+        guard let window else { return }
+        onSizeChange?(window.contentView?.bounds.size ?? bounds.size)
     }
 
     private func detachObserver() {

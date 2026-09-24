@@ -132,8 +132,9 @@ public struct ArchitectureLayoutEngine {
     }
 
     public func layout(_ graph: ArchitectureGraph) -> ArchitectureLayout {
-        let nodes = Dictionary(uniqueKeysWithValues: graph.nodes.sorted { $0.id < $1.id }.map { ($0.id, $0) })
-        let validEdges = graph.edges.filter { nodes[$0.source] != nil && nodes[$0.destination] != nil }
+        let nodes = Dictionary(graph.nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let edgesByID = Dictionary(graph.edges.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let validEdges = edgesByID.values.filter { nodes[$0.source] != nil && nodes[$0.destination] != nil }
             .sorted { ($0.source, $0.destination, $0.id) < ($1.source, $1.destination, $1.id) }
         guard !nodes.isEmpty else { return ArchitectureLayout(nodes: [], groups: [], edges: [], bounds: .zero) }
 
@@ -228,7 +229,7 @@ public struct ArchitectureLayoutEngine {
 
     private func makeGroupLayouts(_ groups: [ArchitectureGroup], nodeLayouts: [ArchitectureNodeLayout]) -> [ArchitectureGroupLayout] {
         let frames = Dictionary(uniqueKeysWithValues: nodeLayouts.map { ($0.id, $0.frame) })
-        let definitions = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        let definitions = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var resolved = [String: CGRect](), resolving = Set<String>()
         func resolve(_ id: String) -> CGRect? {
             if let frame = resolved[id] { return frame }
@@ -241,9 +242,9 @@ public struct ArchitectureLayoutEngine {
             resolved[id] = frame
             return frame
         }
-        return groups.sorted { $0.id < $1.id }.compactMap { group in
-            guard let frame = resolve(group.id) else { return nil }
-            return ArchitectureGroupLayout(id: group.id, frame: frame)
+        return definitions.keys.sorted().compactMap { id in
+            guard let frame = resolve(id) else { return nil }
+            return ArchitectureGroupLayout(id: id, frame: frame)
         }
     }
 

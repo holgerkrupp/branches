@@ -43,6 +43,34 @@ final class ArchitectureFoundationTests: XCTestCase {
         XCTAssertEqual(try shellGit(["rev-parse", "HEAD"], in: repository).trimmingCharacters(in: .whitespacesAndNewlines), head)
     }
 
+    func testAnalyzerSkipsGeneratedBuildDirectories() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("Sources/App.swift")
+        let generated = directory.appendingPathComponent("build/DerivedData/GeneratedAssetSymbols.swift")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: generated.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "struct App {}".write(to: source, atomically: true, encoding: .utf8)
+        try "extension AppKit.NSColor {}".write(to: generated, atomically: true, encoding: .utf8)
+
+        let analysis = try await SwiftRepositoryAnalyzer().analyze(at: directory)
+
+        XCTAssertEqual(analysis.files.map(\.path), ["Sources/App.swift"])
+    }
+
+    func testArchitectureBuilderCoalescesRepeatedDeclarations() async throws {
+        let evidence = AnalysisEvidence(line: 1, text: "extension AppKit.NSImage", confidence: 1)
+        let duplicate = RepositorySymbol(id: "one", name: "AppKit", kind: .extension, path: "Generated.swift", evidence: evidence)
+        let analysis = RepositoryAnalysis(
+            rootURL: URL(fileURLWithPath: "/tmp/repository"),
+            files: [RepositoryAnalysisFile(path: "Generated.swift", language: "swift", symbols: [duplicate, RepositorySymbol(id: "two", name: "AppKit", kind: .extension, path: "Generated.swift", evidence: evidence)])]
+        )
+
+        let architecture = try await DeterministicRepositoryArchitectureService().build(from: analysis)
+
+        XCTAssertEqual(architecture.components.map(\.id), ["component:Generated.swift:AppKit"])
+    }
+
     private func makeRepository() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

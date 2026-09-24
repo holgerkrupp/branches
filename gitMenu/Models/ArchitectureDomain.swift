@@ -79,8 +79,8 @@ public struct ArchitectureComparison: Codable, Hashable, Sendable {
 
     public init(from: RepositoryArchitecture, to: RepositoryArchitecture) {
         fromRevision = from.revision; toRevision = to.revision
-        let oldComponents = Dictionary(uniqueKeysWithValues: from.components.map { ($0.id, $0) })
-        let newComponents = Dictionary(uniqueKeysWithValues: to.components.map { ($0.id, $0) })
+        let oldComponents = Dictionary(from.components.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        let newComponents = Dictionary(to.components.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         let oldComponentIDs = Set(oldComponents.keys)
         let newComponentIDs = Set(newComponents.keys)
         addedComponents = newComponentIDs.subtracting(oldComponentIDs).sorted().compactMap { newComponents[$0] }
@@ -89,8 +89,8 @@ public struct ArchitectureComparison: Codable, Hashable, Sendable {
             guard oldComponents[id] != newComponents[id] else { return nil }
             return ArchitectureComponentChange(id: id, before: oldComponents[id], after: newComponents[id])
         }
-        let oldRelationships = Dictionary(uniqueKeysWithValues: from.relationships.map { ($0.id, $0) })
-        let newRelationships = Dictionary(uniqueKeysWithValues: to.relationships.map { ($0.id, $0) })
+        let oldRelationships = Dictionary(from.relationships.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        let newRelationships = Dictionary(to.relationships.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         let oldRelationshipIDs = Set(oldRelationships.keys)
         let newRelationshipIDs = Set(newRelationships.keys)
         addedRelationships = newRelationshipIDs.subtracting(oldRelationshipIDs).sorted().compactMap { newRelationships[$0] }
